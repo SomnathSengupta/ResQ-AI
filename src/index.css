@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    @apply h-full;
+  }
+
+  * {
+    @apply m-0 p-0 box-border;
+  }
+
+  body {
+    @apply font-sans;
+  }
+}
+.blinking-marker {
+  animation: blink 1s infinite;
+}
+.leaflet-container {
+  z-index: 0 !important;
+}
+@keyframes blink {
+  0% { opacity: 1; }
+  50% { opacity: 0.2; }
+  100% { opacity: 1; }
+}
