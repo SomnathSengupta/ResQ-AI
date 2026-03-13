@@ -87,14 +87,18 @@ const Dashboard = () => {
     return categoryMatch && urgencyMatch;
   });
 
-  const sortedAlerts = [...filteredAlerts].sort((a, b) => b.urgency - a.urgency);
+  const sortedAlerts = [...filteredAlerts].sort(
+    (a, b) => b.urgency - a.urgency,
+  );
 
   /* ---- SUMMARY COUNTS ---- */
 
   const rescueCount = alerts.filter((a) => a.category === "Rescue").length;
   const medicalCount = alerts.filter((a) => a.category === "Medical").length;
   const highUrgencyCount = alerts.filter((a) => a.urgency >= 4).length;
-  const lowCredibilityCount = alerts.filter((a) => a.credibility === "Low").length;
+  const lowCredibilityCount = alerts.filter(
+    (a) => a.credibility === "Low",
+  ).length;
 
   /* ---- NAVIGATION HANDLER ---- */
   const handleShowDetails = (alert: DisasterAlert) => {
@@ -107,7 +111,9 @@ const Dashboard = () => {
     <div className="min-h-screen bg-slate-100 p-8">
       {/* HEADER */}
       <div className="mb-8 flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-slate-800">Disaster Control Room</h1>
+        <h1 className="text-3xl font-bold text-slate-800">
+          Disaster Control Room
+        </h1>
 
         <div className="flex items-center gap-4">
           <div
@@ -297,11 +303,16 @@ const Dashboard = () => {
                 }
 
                 return (
-                  <tr key={alert.id} className="border-b transition hover:bg-slate-50">
+                  <tr
+                    key={alert.id}
+                    className="border-b transition hover:bg-slate-50"
+                  >
                     <td className="p-4 font-medium">{alert.location}</td>
 
                     <td className="flex items-center gap-2 p-4">
-                      <span className={`h-3 w-3 rounded-full ${categoryDot}`}></span>
+                      <span
+                        className={`h-3 w-3 rounded-full ${categoryDot}`}
+                      ></span>
                       {alert.category}
                     </td>
 
@@ -309,7 +320,9 @@ const Dashboard = () => {
 
                     <td className="p-4">
                       <div className="flex items-center gap-2">
-                        <span className={`h-3 w-3 rounded-full ${credibilityDot}`}></span>
+                        <span
+                          className={`h-3 w-3 rounded-full ${credibilityDot}`}
+                        ></span>
                         {alert.credibility}
                       </div>
                     </td>
