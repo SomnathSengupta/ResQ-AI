@@ -16,8 +16,9 @@ import markerShadow from "leaflet/dist/images/marker-shadow.png";
 (L.Icon.Default.prototype as any)._getIconUrl = undefined;
 L.Icon.Default.mergeOptions({ iconUrl: markerIcon, shadowUrl: markerShadow });
 
-/* ─── API BASE ───────────────────────────────────────────────────────────── */
-const API_BASE = "ngrok_url";
+/* ─── API BASES ──────────────────────────────────────────────────────────── */
+const API_BASE      = "https://constructible-irvin-contiguous.ngrok-free.dev";
+const API_BASE_NEW  = "https://duckiest-branson-epiphenomenally.ngrok-free.dev";
 
 /* ─── CSS-in-JS (injected once) ──────────────────────────────────────────── */
 const GLOBAL_CSS = `
@@ -47,6 +48,7 @@ const GLOBAL_CSS = `
     --dw-green:       #00e5a0;
     --dw-yellow:      #ffc940;
     --dw-blue:        #4facf7;
+    --dw-purple:      #b07ef8;
     --mono:           'IBM Plex Mono', monospace;
     --display:        'Barlow Condensed', sans-serif;
     --body-font:      'Barlow', sans-serif;
@@ -164,7 +166,7 @@ const GLOBAL_CSS = `
     color: var(--dw-muted2); margin-bottom: 6px;
   }
 
-  .dw-profile-popup p strong { color: var(--dw-text); }
+  .dw-profile-popup p strong { color: var(--dw-text); font-weight: 500; }
 
   /* ── Layout ── */
   .dw-layout {
@@ -205,6 +207,29 @@ const GLOBAL_CSS = `
     font-family: var(--mono); font-size: 0.52rem;
     color: var(--dw-muted); text-transform: uppercase;
     letter-spacing: 0.08em; margin-top: 3px; display: block;
+  }
+
+  /* Source tabs */
+  .dw-source-tabs {
+    display: flex; border-bottom: 1px solid var(--dw-border); flex-shrink: 0;
+  }
+
+  .dw-source-tab {
+    flex: 1; padding: 7px 10px; text-align: center;
+    font-family: var(--mono); font-size: 0.62rem; text-transform: uppercase;
+    letter-spacing: 0.07em; color: var(--dw-muted); cursor: pointer;
+    border-bottom: 2px solid transparent; transition: all 0.15s;
+    background: none; border-top: none; border-left: none; border-right: none;
+  }
+
+  .dw-source-tab:hover { color: var(--dw-muted2); }
+
+  .dw-source-tab.active {
+    color: var(--dw-blue); border-bottom-color: var(--dw-blue);
+  }
+
+  .dw-source-tab.tab-new.active {
+    color: var(--dw-purple); border-bottom-color: var(--dw-purple);
   }
 
   /* Filters */
@@ -250,6 +275,23 @@ const GLOBAL_CSS = `
   .dw-card-list::-webkit-scrollbar { width: 4px; }
   .dw-card-list::-webkit-scrollbar-thumb { background: var(--dw-border-lit); border-radius: 2px; }
 
+  /* Source badge on card */
+  .dw-source-badge {
+    font-family: var(--mono); font-size: 0.55rem; padding: 2px 6px;
+    border-radius: 3px; text-transform: uppercase; letter-spacing: 0.07em;
+    font-weight: 500; flex-shrink: 0;
+  }
+
+  .dw-source-badge.badge-reddit {
+    background: rgba(79,172,247,0.1); color: var(--dw-blue);
+    border: 1px solid rgba(79,172,247,0.25);
+  }
+
+  .dw-source-badge.badge-intel {
+    background: rgba(176,126,248,0.1); color: var(--dw-purple);
+    border: 1px solid rgba(176,126,248,0.25);
+  }
+
   /* Disaster card */
   .dw-card {
     background: var(--dw-surface2); border: 1px solid var(--dw-border);
@@ -262,6 +304,7 @@ const GLOBAL_CSS = `
 
   .dw-card:hover { border-color: var(--dw-border-lit); transform: translateX(2px); }
   .dw-card.active { border-color: var(--dw-blue); background: rgba(79,172,247,0.04); }
+  .dw-card.active-intel { border-color: var(--dw-purple); background: rgba(176,126,248,0.04); }
 
   .dw-card-header {
     display: flex; align-items: flex-start;
@@ -466,7 +509,7 @@ const GLOBAL_CSS = `
   }
 `;
 
-/* ─── API TYPES ──────────────────────────────────────────────────────────── */
+/* ─── API TYPES — Original API ───────────────────────────────────────────── */
 interface AiAnalysis {
   category: string;      // Rescue | Relief | Damage | Warning | Casualty
   urgency: number;       // 1–5
@@ -503,6 +546,116 @@ export interface DisasterDocument {
 interface FetchResponse  { fetch_id: string; total: number; fetched_at: string; }
 interface VerifyResponse { total_verified: number; total_saved: number; total_rejected: number; verified_at: string; }
 interface StoredResponse { total: number; fetched_at: string; posts: DisasterDocument[]; }
+
+/* ─── API TYPES — New Intelligence API ──────────────────────────────────── */
+/*
+  Real response shape (confirmed from live API):
+  { count: number, data: IntelEvent[] }
+  Fields are camelCase. aiAnalysis.category is the disaster sub-type (e.g. "earthquake").
+*/
+interface IntelEvent {
+  source?: string;
+  sourceUrl?: string;
+  originalText?: string;
+  disasterType?: string;
+  status?: string;
+  createdAt?: string;
+  location?: {
+    city?: string | null;
+    state?: string | null;
+    country?: string | null;
+    coordinates?: { lat: number; lng: number } | null;
+  } | null;
+  aiAnalysis?: {
+    category?: string;
+    urgency?: number;
+    confidence?: number;
+    credibility?: string;
+    summary?: string;
+  } | null;
+  [key: string]: unknown;
+}
+
+interface IntelEventsResponse {
+  count: number;
+  data: IntelEvent[];
+}
+
+/* ─── UNIFIED TYPE (both APIs merge into this) ───────────────────────────── */
+export interface UnifiedDisaster {
+  uid: string;                   // unique across both sources
+  apiSource: "reddit" | "intel"; // which API it came from
+  source: string;
+  source_url: string;
+  disaster_type: string;
+  original_text: string;
+  location?: Location | null;
+  ai_analysis?: AiAnalysis | null;
+  status: string;
+  created_at: string;
+  fetched_at: string;
+  is_saved: boolean;
+}
+
+/* ─── NORMALISER: IntelEvent → UnifiedDisaster ───────────────────────────── */
+function normaliseIntelEvent(e: IntelEvent): UnifiedDisaster {
+  const urgency = e.aiAnalysis?.urgency ?? 1;
+  const clampedUrgency = Math.min(5, Math.max(1, Number(urgency)));
+
+  const coordinates: Coordinates | null =
+    e.location?.coordinates?.lat != null && e.location?.coordinates?.lng != null
+      ? { lat: e.location.coordinates.lat, lng: e.location.coordinates.lng }
+      : null;
+
+  const location: Location = {
+    city:    e.location?.city    ?? null,
+    state:   e.location?.state   ?? null,
+    country: e.location?.country ?? null,
+    coordinates,
+  };
+
+  // Map the disaster sub-type category (e.g. "earthquake") to a triage category
+  // so it integrates cleanly with the existing CAT_STYLE colour map.
+  const rawCat  = (e.aiAnalysis?.category ?? "").toLowerCase();
+  const triageCategory =
+    rawCat.includes("rescue")   ? "Rescue"  :
+    rawCat.includes("relief")   ? "Relief"  :
+    rawCat.includes("casualty") ? "Casualty":
+    rawCat.includes("damage")   ? "Damage"  : "Warning";
+
+  const ai_analysis: AiAnalysis = {
+    category:    triageCategory,
+    urgency:     clampedUrgency,
+    credibility: e.aiAnalysis?.credibility ?? "Medium",
+    summary:     e.aiAnalysis?.summary ?? e.originalText ?? "",
+  };
+
+  const uid = `intel_${e.sourceUrl ?? e.originalText ?? Math.random().toString(36).slice(2)}`;
+
+  return {
+    uid,
+    apiSource:    "intel",
+    source:       e.source ?? "Disaster Intelligence API",
+    source_url:   e.sourceUrl ?? "",
+    disaster_type: e.disasterType ?? e.aiAnalysis?.category ?? "Unknown",
+    original_text: e.originalText ?? "No details available",
+    location,
+    ai_analysis,
+    status:       e.status ?? "active",
+    created_at:   e.createdAt ?? new Date().toISOString(),
+    fetched_at:   new Date().toISOString(),
+    is_saved:     false,
+  };
+}
+
+/* ─── NORMALISER: DisasterDocument → UnifiedDisaster ────────────────────── */
+function normaliseRedditDoc(d: DisasterDocument): UnifiedDisaster {
+  return {
+    ...d,
+    uid:       `reddit_${d.reddit_id}`,
+    apiSource: "reddit",
+  };
+}
 
 /* ─── HELPERS ────────────────────────────────────────────────────────────── */
 const DISASTER_ICONS: Record<string, string> = {
@@ -541,8 +694,8 @@ function urgencyColor(u: number): string {
   return U_COLOR[u] ?? "var(--dw-muted)";
 }
 
-function makeMarkerIcon(urgency: number, disasterType: string, active = false) {
-  const c = urgencyColor(urgency);
+function makeMarkerIcon(urgency: number, disasterType: string, active = false, isIntel = false) {
+  const c = isIntel ? "#b07ef8" : urgencyColor(urgency);
   const icon = getDisasterIcon(disasterType);
   const s = 12 + urgency * 4;
   return L.divIcon({
@@ -591,7 +744,7 @@ function MapResizer() {
   return null;
 }
 
-function FlyToAlert({ alert }: { alert: DisasterDocument | null }) {
+function FlyToAlert({ alert }: { alert: UnifiedDisaster | null }) {
   const map = useMap();
   useEffect(() => {
     if (!alert?.location?.coordinates) return;
@@ -601,32 +754,36 @@ function FlyToAlert({ alert }: { alert: DisasterDocument | null }) {
   return null;
 }
 
+/* ─── SOURCE TAB TYPE ────────────────────────────────────────────────────── */
+type SourceTab = "all" | "reddit" | "intel";
+
 /* ─── COMPONENT ──────────────────────────────────────────────────────────── */
 const Dashboard = () => {
   const navigate = useNavigate();
 
   /* ── Data state ── */
-  const [disasters, setDisasters]     = useState<DisasterDocument[]>([]);
-  const [loading, setLoading]         = useState(false);
-  const [loadStep, setLoadStep]       = useState("");
-  const [loadMsg, setLoadMsg]         = useState("");
-  const [lastUpdated, setLastUpdated] = useState("Never loaded");
-  const [apiError, setApiError]       = useState<string | null>(null);
-  const [toast, setToast]             = useState({ msg: "", type: "", visible: false });
+  const [redditDisasters, setRedditDisasters] = useState<UnifiedDisaster[]>([]);
+  const [intelDisasters,  setIntelDisasters]  = useState<UnifiedDisaster[]>([]);
+  const [loading, setLoading]                 = useState(false);
+  const [loadStep, setLoadStep]               = useState("");
+  const [loadMsg, setLoadMsg]                 = useState("");
+  const [lastUpdated, setLastUpdated]         = useState("Never loaded");
+  const [apiError, setApiError]               = useState<string | null>(null);
+  const [toast, setToast]                     = useState({ msg: "", type: "", visible: false });
 
   /* ── Filter state ── */
+  const [sourceTab,      setSourceTab]      = useState<SourceTab>("all");
   const [categoryFilter, setCategoryFilter] = useState("");
-  const [typeFilter, setTypeFilter]         = useState("");
-  const [urgencyFilter, setUrgencyFilter]   = useState("");
-  const [searchQuery, setSearchQuery]       = useState("");
+  const [typeFilter,     setTypeFilter]     = useState("");
+  const [urgencyFilter,  setUrgencyFilter]  = useState("");
+  const [searchQuery,    setSearchQuery]    = useState("");
 
   /* ── UI state ── */
-  const [activeId, setActiveId]                 = useState<string | null>(null);
-  const [showProfilePopup, setShowProfilePopup] = useState(false);
-  const [spinning, setSpinning]                 = useState(false);
+  const [activeId,          setActiveId]          = useState<string | null>(null);
+  const [showProfilePopup,  setShowProfilePopup]  = useState(false);
+  const [spinning,          setSpinning]          = useState(false);
 
-  const popupRef    = useRef<HTMLDivElement>(null);
-  const toastTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* ── Inject CSS once ── */
   useEffect(() => {
@@ -649,7 +806,76 @@ const Dashboard = () => {
     );
   }, []);
 
-  /* ── 3-step API pipeline ── */
+  /* ── New Intelligence API fetch ── */
+  const loadIntelDisasters = useCallback(async () => {
+    // The new API is also served via ngrok — the skip-browser-warning header
+    // is required on every request or ngrok returns an HTML interstitial page
+    // instead of JSON, which causes the CORS preflight to fail.
+    const INTEL_HEADERS: Record<string, string> = {
+      "Content-Type": "application/json",
+      "ngrok-skip-browser-warning": "true",
+    };
+
+    try {
+      const res = await fetch(`${API_BASE_NEW}/refresh`, {
+        method: "POST",
+        headers: INTEL_HEADERS,
+      });
+      // ignore non-ok silently — /refresh may return nothing useful
+      if (!res.ok) throw new Error("refresh failed");
+    } catch {
+      // best-effort refresh; proceed to /events regardless
+    }
+
+    const eventsRes = await fetch(`${API_BASE_NEW}/events?limit=100`, {
+      headers: INTEL_HEADERS,
+    });
+    if (!eventsRes.ok) throw new Error(`Intel events fetch failed (HTTP ${eventsRes.status})`);
+
+    const payload: IntelEventsResponse = await eventsRes.json();
+    const raw: IntelEvent[] = Array.isArray(payload.data) ? payload.data : [];
+    const normalised = raw.map(normaliseIntelEvent);
+    setIntelDisasters(normalised);
+    return normalised.length;
+  }, []);
+
+  /* ── Original Reddit API 3-step pipeline ── */
+  const loadRedditDisasters = useCallback(async () => {
+    const NGROK_HEADERS: Record<string, string> = {
+      "Content-Type": "application/json",
+      "ngrok-skip-browser-warning": "true",
+    };
+
+    // Step 1
+    const fetchRes = await fetch(`${API_BASE}/reddit/fetch`, {
+      method: "POST",
+      headers: NGROK_HEADERS,
+    });
+    if (!fetchRes.ok) throw new Error(`Reddit fetch failed (HTTP ${fetchRes.status})`);
+    const fetchData: FetchResponse = await fetchRes.json();
+
+    // Step 2
+    const verifyRes = await fetch(`${API_BASE}/gemini/verify`, {
+      method: "POST",
+      headers: NGROK_HEADERS,
+      body: JSON.stringify({ fetch_id: fetchData.fetch_id }),
+    });
+    if (!verifyRes.ok) throw new Error(`Gemini verify failed (HTTP ${verifyRes.status})`);
+    const verifyData: VerifyResponse = await verifyRes.json();
+
+    // Step 3
+    const storedRes = await fetch(`${API_BASE}/disasters/stored?limit=100`, {
+      headers: { "ngrok-skip-browser-warning": "true" },
+    });
+    if (!storedRes.ok) throw new Error(`Stored fetch failed (HTTP ${storedRes.status})`);
+    const storedData: StoredResponse = await storedRes.json();
+
+    const normalised = storedData.posts.map(normaliseRedditDoc);
+    setRedditDisasters(normalised);
+    return { count: storedData.total, saved: verifyData.total_saved };
+  }, []);
+
+  /* ── Combined load ── */
   const loadDisasters = useCallback(async () => {
     setLoading(true);
     setSpinning(true);
@@ -657,88 +883,93 @@ const Dashboard = () => {
     setLastUpdated("Refreshing…");
 
     const step = (n: number, msg: string) => {
-      setLoadStep(`Step ${n}/3`);
+      setLoadStep(`Step ${n}/4`);
       setLoadMsg(msg);
     };
 
-    // Required for ngrok — without this header ngrok returns an HTML
-    // interstitial warning page instead of JSON, breaking all API calls.
-    const NGROK_HEADERS: Record<string, string> = {
-      "Content-Type": "application/json",
-      "ngrok-skip-browser-warning": "true",
-    };
+    let redditOk    = false;
+    let intelOk     = false;
+    let redditCount = 0;
+    let intelCount  = 0;
+    let redditSaved = 0;
 
+    /* ── Reddit pipeline ── */
     try {
-      /* STEP 1 — POST /reddit/fetch */
       step(1, "Fetching Reddit posts…");
-      const fetchRes = await fetch(`${API_BASE}/reddit/fetch`, {
-        method: "POST",
-        headers: NGROK_HEADERS,
-      });
-      if (!fetchRes.ok) throw new Error(`Reddit fetch failed (HTTP ${fetchRes.status})`);
-      const fetchData: FetchResponse = await fetchRes.json();
-
-      /* STEP 2 — POST /gemini/verify */
+      // steps 1-2 inside loadRedditDisasters
       step(2, "Verifying with Gemini AI…");
-      const verifyRes = await fetch(`${API_BASE}/gemini/verify`, {
-        method: "POST",
-        headers: NGROK_HEADERS,
-        body: JSON.stringify({ fetch_id: fetchData.fetch_id }),
-      });
-      if (!verifyRes.ok) throw new Error(`Gemini verify failed (HTTP ${verifyRes.status})`);
-      const verifyData: VerifyResponse = await verifyRes.json();
-
-      /* STEP 3 — GET /disasters/stored */
       step(3, "Loading stored disasters…");
-      const storedRes = await fetch(`${API_BASE}/disasters/stored?limit=100`, {
-        headers: { "ngrok-skip-browser-warning": "true" },
-      });
-      if (!storedRes.ok) throw new Error(`Stored fetch failed (HTTP ${storedRes.status})`);
-      const storedData: StoredResponse = await storedRes.json();
-
-      setDisasters(storedData.posts);
-      setActiveId(storedData.posts[0]?.reddit_id ?? null);
-      setLastUpdated("Updated " + new Date().toLocaleTimeString());
-      showToast(
-        `✓ ${verifyData.total_saved} new · ${storedData.total} total disasters`,
-        "success"
-      );
-
-    } catch (_err) {
-      /* Fallback — try GET /disasters/stored only */
+      const r = await loadRedditDisasters();
+      redditOk    = true;
+      redditCount = r.count;
+      redditSaved = r.saved;
+    } catch {
+      /* Reddit failed — try loading stored only */
       try {
+        step(3, "Falling back to cached data…");
         const res = await fetch(`${API_BASE}/disasters/stored?limit=100`, {
           headers: { "ngrok-skip-browser-warning": "true" },
         });
         if (!res.ok) throw new Error("Stored also failed");
         const data: StoredResponse = await res.json();
-        setDisasters(data.posts);
-        setActiveId(data.posts[0]?.reddit_id ?? null);
-        setLastUpdated("Cached · " + new Date().toLocaleTimeString());
-        showToast("⚠ Live fetch failed — showing stored data", "error");
+        setRedditDisasters(data.posts.map(normaliseRedditDoc));
+        redditOk    = true;
+        redditCount = data.total;
+        showToast("⚠ Reddit live fetch failed — showing cached data", "error");
       } catch {
-        setApiError(
-          `Cannot reach the API at ${API_BASE}.\n\nMake sure the backend server is running.`
-        );
-        setLastUpdated("Offline");
-        showToast("✗ API unreachable", "error");
+        // Reddit completely unavailable
       }
-    } finally {
-      setLoading(false);
-      setSpinning(false);
     }
-  }, [showToast]);
+
+    /* ── Intelligence API ── */
+    try {
+      step(4, "Loading Intelligence API events…");
+      intelCount = await loadIntelDisasters();
+      intelOk = true;
+    } catch {
+      // Intel API unavailable — non-fatal
+    }
+
+    if (!redditOk && !intelOk) {
+      setApiError(
+        `Cannot reach either API.\n\nMake sure the backend servers are running.`
+      );
+      setLastUpdated("Offline");
+      showToast("✗ Both APIs unreachable", "error");
+    } else {
+      const parts: string[] = [];
+      if (redditOk) parts.push(`Reddit: ${redditSaved} new · ${redditCount} total`);
+      if (intelOk)  parts.push(`Intel: ${intelCount} events`);
+      if (!redditOk) parts.push("Reddit: offline");
+      if (!intelOk)  parts.push("Intel: offline");
+      setLastUpdated("Updated " + new Date().toLocaleTimeString());
+      showToast(`✓ ${parts.join("  ·  ")}`, "success");
+    }
+
+    setLoading(false);
+    setSpinning(false);
+  }, [loadRedditDisasters, loadIntelDisasters, showToast]);
 
   /* Auto-load on mount */
   useEffect(() => { loadDisasters(); }, [loadDisasters]);
 
-  /* ── Dynamic type list for filter dropdown ── */
+  /* ── Merge both sources ── */
+  const allDisasters: UnifiedDisaster[] = [...redditDisasters, ...intelDisasters];
+
+  /* ── Source-tab slice ── */
+  const sourceSlice = allDisasters.filter((d) => {
+    if (sourceTab === "reddit") return d.apiSource === "reddit";
+    if (sourceTab === "intel")  return d.apiSource === "intel";
+    return true;
+  });
+
+  /* ── Dynamic type list ── */
   const disasterTypes = Array.from(
-    new Set(disasters.map((d) => d.disaster_type).filter(Boolean))
+    new Set(sourceSlice.map((d) => d.disaster_type).filter(Boolean))
   ).sort();
 
   /* ── Filter + sort ── */
-  const filteredDisasters = disasters
+  const filteredDisasters = sourceSlice
     .filter((d) => {
       if (typeFilter     && d.disaster_type              !== typeFilter)           return false;
       if (categoryFilter && d.ai_analysis?.category      !== categoryFilter)       return false;
@@ -754,20 +985,20 @@ const Dashboard = () => {
     })
     .sort((a, b) => (b.ai_analysis?.urgency ?? 0) - (a.ai_analysis?.urgency ?? 0));
 
-  const activeAlert  = filteredDisasters.find((d) => d.reddit_id === activeId) ?? filteredDisasters[0] ?? null;
-  const mappedCount  = filteredDisasters.filter((d) => d.location?.coordinates?.lat).length;
+  const activeAlert = filteredDisasters.find((d) => d.uid === activeId) ?? filteredDisasters[0] ?? null;
+  const mappedCount = filteredDisasters.filter((d) => d.location?.coordinates?.lat).length;
 
-  /* ── Summary stats ── */
-  const totalCount    = disasters.length;
-  const criticalCount = disasters.filter((d) => (d.ai_analysis?.urgency ?? 0) === 5).length;
-  const rescueCount   = disasters.filter((d) => d.ai_analysis?.category === "Rescue").length;
-  const mappedTotal   = disasters.filter((d) => d.location?.coordinates?.lat).length;
+  /* ── Summary stats (all sources combined) ── */
+  const totalCount    = allDisasters.length;
+  const criticalCount = allDisasters.filter((d) => (d.ai_analysis?.urgency ?? 0) === 5).length;
+  const rescueCount   = allDisasters.filter((d) => d.ai_analysis?.category === "Rescue").length;
+  const mappedTotal   = allDisasters.filter((d) => d.location?.coordinates?.lat).length;
 
   const clearFilters = () => {
     setCategoryFilter(""); setTypeFilter(""); setUrgencyFilter(""); setSearchQuery("");
   };
 
-  const goToDetails = (d: DisasterDocument) => navigate("/details", { state: d });
+  const goToDetails = (d: UnifiedDisaster) => navigate("/details", { state: d });
 
   /* ── Render ── */
   return (
@@ -808,7 +1039,7 @@ const Dashboard = () => {
           >
             <div className="dw-profile-icon">👤</div>
             {showProfilePopup && (
-              <div ref={popupRef} className="dw-profile-popup">
+              <div className="dw-profile-popup">
                 <p><strong>Role:</strong> Disaster Management Authority Officer</p>
                 <p><strong>Official ID:</strong> DMA-001</p>
               </div>
@@ -847,6 +1078,28 @@ const Dashboard = () => {
             </div>
           </div>
 
+          {/* Source tabs */}
+          <div className="dw-source-tabs">
+            <button
+              className={`dw-source-tab${sourceTab === "all" ? " active" : ""}`}
+              onClick={() => setSourceTab("all")}
+            >
+              All ({allDisasters.length})
+            </button>
+            <button
+              className={`dw-source-tab${sourceTab === "reddit" ? " active" : ""}`}
+              onClick={() => setSourceTab("reddit")}
+            >
+              Reddit ({redditDisasters.length})
+            </button>
+            <button
+              className={`dw-source-tab tab-new${sourceTab === "intel" ? " active" : ""}`}
+              onClick={() => setSourceTab("intel")}
+            >
+              Intel API ({intelDisasters.length})
+            </button>
+          </div>
+
           {/* Filters */}
           <div className="dw-filters">
             <input
@@ -857,7 +1110,6 @@ const Dashboard = () => {
             />
 
             <div className="dw-filter-row">
-              {/* Dynamic type list populated from real API data */}
               <select
                 className="dw-filter-select"
                 value={typeFilter}
@@ -910,7 +1162,7 @@ const Dashboard = () => {
               </div>
             )}
 
-            {/* Loading spinner with step indicator */}
+            {/* Loading spinner */}
             {loading && (
               <div className="dw-loading-state">
                 <div className="dw-loader-ring" />
@@ -922,7 +1174,7 @@ const Dashboard = () => {
             )}
 
             {/* Empty after filter */}
-            {!loading && !apiError && filteredDisasters.length === 0 && disasters.length > 0 && (
+            {!loading && !apiError && filteredDisasters.length === 0 && allDisasters.length > 0 && (
               <div className="dw-empty">
                 No disasters match your filters.
                 <span style={{ fontSize: "0.62rem", color: "var(--dw-muted)", marginTop: 4 }}>
@@ -935,23 +1187,27 @@ const Dashboard = () => {
             {!loading && filteredDisasters.map((d, i) => {
               const ai       = d.ai_analysis;
               const u        = ai?.urgency ?? 1;
-              const uc       = urgencyColor(u);
+              const uc       = d.apiSource === "intel" ? "var(--dw-purple)" : urgencyColor(u);
               const catStyle = ai?.category ? CAT_STYLE[ai.category] : null;
-              const isActive = activeId === d.reddit_id;
+              const isActive = activeId === d.uid;
               const locStr   = formatLocString(d.location);
               const icon     = getDisasterIcon(d.disaster_type);
+              const isIntel  = d.apiSource === "intel";
 
               return (
                 <div
-                  key={d.reddit_id}
-                  className={`dw-card${isActive ? " active" : ""}`}
+                  key={d.uid}
+                  className={`dw-card${isActive ? (isIntel ? " active-intel" : " active") : ""}`}
                   style={{ animationDelay: `${Math.min(i * 0.04, 0.5)}s` }}
-                  onClick={() => setActiveId(d.reddit_id)}
+                  onClick={() => setActiveId(d.uid)}
                 >
                   <div className="dw-card-header">
                     <div
                       className="dw-card-icon"
-                      style={{ background: `${uc}18`, border: `1px solid ${uc}40` }}
+                      style={{
+                        background: isIntel ? "rgba(176,126,248,0.12)" : `${urgencyColor(u)}18`,
+                        border: isIntel ? "1px solid rgba(176,126,248,0.3)" : `1px solid ${urgencyColor(u)}40`,
+                      }}
                     >
                       {icon}
                     </div>
@@ -968,7 +1224,11 @@ const Dashboard = () => {
                     {ai?.urgency && (
                       <div
                         className="dw-urgency-badge"
-                        style={{ background: `${uc}20`, color: uc, border: `1.5px solid ${uc}55` }}
+                        style={{
+                          background: isIntel ? "rgba(176,126,248,0.15)" : `${urgencyColor(u)}20`,
+                          color: uc,
+                          border: `1.5px solid ${isIntel ? "rgba(176,126,248,0.4)" : `${urgencyColor(u)}55`}`,
+                        }}
                       >
                         {ai.urgency}
                       </div>
@@ -976,6 +1236,11 @@ const Dashboard = () => {
                   </div>
 
                   <div className="dw-card-meta">
+                    {/* Source badge */}
+                    <span className={`dw-source-badge ${isIntel ? "badge-intel" : "badge-reddit"}`}>
+                      {isIntel ? "Intel" : "Reddit"}
+                    </span>
+
                     {catStyle && ai?.category && (
                       <span
                         className="dw-cat-pill"
@@ -1043,21 +1308,37 @@ const Dashboard = () => {
                 .map((d) => {
                   const ai       = d.ai_analysis;
                   const u        = ai?.urgency ?? 1;
-                  const isActive = activeId === d.reddit_id;
+                  const isActive = activeId === d.uid;
+                  const isIntel  = d.apiSource === "intel";
                   const locStr   = formatLocString(d.location);
                   const cat      = ai?.category ?? "";
                   const catStyle = CAT_STYLE[cat];
 
                   return (
                     <Marker
-                      key={d.reddit_id}
+                      key={d.uid}
                       position={[d.location!.coordinates!.lat, d.location!.coordinates!.lng]}
-                      icon={makeMarkerIcon(u, d.disaster_type, isActive)}
-                      eventHandlers={{ click: () => setActiveId(d.reddit_id) }}
+                      icon={makeMarkerIcon(u, d.disaster_type, isActive, isIntel)}
+                      eventHandlers={{ click: () => setActiveId(d.uid) }}
                     >
                       <Popup>
                         <div className="dw-popup">
-                          <div className="dw-popup-type">{d.disaster_type}</div>
+                          <div className="dw-popup-type">
+                            {d.disaster_type}
+                            <span
+                              style={{
+                                marginLeft: 6,
+                                padding: "1px 5px",
+                                borderRadius: 3,
+                                fontSize: "0.58rem",
+                                background: isIntel ? "rgba(176,126,248,0.15)" : "rgba(79,172,247,0.12)",
+                                color: isIntel ? "var(--dw-purple)" : "var(--dw-blue)",
+                                border: `1px solid ${isIntel ? "rgba(176,126,248,0.3)" : "rgba(79,172,247,0.25)"}`,
+                              }}
+                            >
+                              {isIntel ? "Intel" : "Reddit"}
+                            </span>
+                          </div>
                           <div className="dw-popup-title">
                             {d.original_text.length > 100
                               ? d.original_text.substring(0, 100) + "…"
@@ -1088,14 +1369,16 @@ const Dashboard = () => {
                             >
                               Show Details →
                             </button>
-                            <a
-                              href={d.source_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="dw-source-link"
-                            >
-                              Source ↗
-                            </a>
+                            {d.source_url && (
+                              <a
+                                href={d.source_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="dw-source-link"
+                              >
+                                Source ↗
+                              </a>
+                            )}
                           </div>
                         </div>
                       </Popup>
@@ -1109,11 +1392,15 @@ const Dashboard = () => {
             <div className="dw-map-pill">
               📍 <strong>{mappedCount}</strong> locations mapped
             </div>
-            {filteredDisasters.length !== disasters.length && (
+            {filteredDisasters.length !== allDisasters.length && (
               <div className="dw-map-pill">
-                🔍 <strong>{filteredDisasters.length}</strong> of {disasters.length} shown
+                🔍 <strong>{filteredDisasters.length}</strong> of {allDisasters.length} shown
               </div>
             )}
+            <div className="dw-map-pill">
+              <span style={{ color: "var(--dw-blue)" }}>■</span> Reddit &nbsp;
+              <span style={{ color: "var(--dw-purple)" }}>■</span> Intel
+            </div>
           </div>
         </div>
 
