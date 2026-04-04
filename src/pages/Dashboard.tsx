@@ -17,8 +17,8 @@ import markerShadow from "leaflet/dist/images/marker-shadow.png";
 L.Icon.Default.mergeOptions({ iconUrl: markerIcon, shadowUrl: markerShadow });
 
 /* ─── API BASES ──────────────────────────────────────────────────────────── */
-const API_BASE      = "https://constructible-irvin-contiguous.ngrok-free.dev";
-const API_BASE_NEW  = "https://duckiest-branson-epiphenomenally.ngrok-free.dev";
+const API_BASE      = "YOUR_API_1";
+const API_BASE_NEW  = "YOUR_API_2";
 
 /* ─── CSS-in-JS (injected once) ──────────────────────────────────────────── */
 const GLOBAL_CSS = `
