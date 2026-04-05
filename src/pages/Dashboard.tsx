@@ -12,13 +12,29 @@ import L from "leaflet";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 
-/* Leaflet Fix */
+
 (L.Icon.Default.prototype as any)._getIconUrl = undefined;
 L.Icon.Default.mergeOptions({ iconUrl: markerIcon, shadowUrl: markerShadow });
 
 /* ─── API BASES ──────────────────────────────────────────────────────────── */
 const API_BASE      = "YOUR_API_1";
 const API_BASE_NEW  = "YOUR_API_2";
+
+/* ─── MODULE-LEVEL CACHE & FLAG ──────────────────────────────────────────── */
+// Both variables live outside React and survive unmount/remount (e.g. going to
+// Details and coming back).  They are reset only when the user signs out so
+// that the next login always starts fresh.
+interface DisasterCache {
+  redditDisasters: UnifiedDisaster[];
+  newsDisasters:  UnifiedDisaster[];
+  lastUpdated:     string;
+}
+
+let disasterCache: DisasterCache | null = null;
+
+// Set to true after the very first successful load.  While it is true the
+// mount-time useEffect will NOT call the API — it just restores from cache.
+let hasLoadedOnce = false;
 
 /* ─── CSS-in-JS (injected once) ──────────────────────────────────────────── */
 const GLOBAL_CSS = `
@@ -287,7 +303,7 @@ const GLOBAL_CSS = `
     border: 1px solid rgba(79,172,247,0.25);
   }
 
-  .dw-source-badge.badge-intel {
+  .dw-source-badge.badge-news {
     background: rgba(176,126,248,0.1); color: var(--dw-purple);
     border: 1px solid rgba(176,126,248,0.25);
   }
@@ -304,7 +320,7 @@ const GLOBAL_CSS = `
 
   .dw-card:hover { border-color: var(--dw-border-lit); transform: translateX(2px); }
   .dw-card.active { border-color: var(--dw-blue); background: rgba(79,172,247,0.04); }
-  .dw-card.active-intel { border-color: var(--dw-purple); background: rgba(176,126,248,0.04); }
+  .dw-card.active-news { border-color: var(--dw-purple); background: rgba(176,126,248,0.04); }
 
   .dw-card-header {
     display: flex; align-items: flex-start;
@@ -547,13 +563,8 @@ interface FetchResponse  { fetch_id: string; total: number; fetched_at: string; 
 interface VerifyResponse { total_verified: number; total_saved: number; total_rejected: number; verified_at: string; }
 interface StoredResponse { total: number; fetched_at: string; posts: DisasterDocument[]; }
 
-/* ─── API TYPES — New Intelligence API ──────────────────────────────────── */
-/*
-  Real response shape (confirmed from live API):
-  { count: number, data: IntelEvent[] }
-  Fields are camelCase. aiAnalysis.category is the disaster sub-type (e.g. "earthquake").
-*/
-interface IntelEvent {
+/* ─── API TYPES — News API ──────────────────────────────────── */
+interface NewsEvent {
   source?: string;
   sourceUrl?: string;
   originalText?: string;
@@ -576,15 +587,15 @@ interface IntelEvent {
   [key: string]: unknown;
 }
 
-interface IntelEventsResponse {
+interface NewsEventsResponse {
   count: number;
-  data: IntelEvent[];
+  data: NewsEvent[];
 }
 
 /* ─── UNIFIED TYPE (both APIs merge into this) ───────────────────────────── */
 export interface UnifiedDisaster {
   uid: string;                   // unique across both sources
-  apiSource: "reddit" | "intel"; // which API it came from
+  apiSource: "reddit" | "news"; // which API it came from
   source: string;
   source_url: string;
   disaster_type: string;
@@ -597,8 +608,8 @@ export interface UnifiedDisaster {
   is_saved: boolean;
 }
 
-/* ─── NORMALISER: IntelEvent → UnifiedDisaster ───────────────────────────── */
-function normaliseIntelEvent(e: IntelEvent): UnifiedDisaster {
+/* ─── NORMALISER: NewsEvent → UnifiedDisaster ───────────────────────────── */
+function normaliseNewsEvent(e: NewsEvent): UnifiedDisaster {
   const urgency = e.aiAnalysis?.urgency ?? 1;
   const clampedUrgency = Math.min(5, Math.max(1, Number(urgency)));
 
@@ -614,8 +625,6 @@ function normaliseIntelEvent(e: IntelEvent): UnifiedDisaster {
     coordinates,
   };
 
-  // Map the disaster sub-type category (e.g. "earthquake") to a triage category
-  // so it integrates cleanly with the existing CAT_STYLE colour map.
   const rawCat  = (e.aiAnalysis?.category ?? "").toLowerCase();
   const triageCategory =
     rawCat.includes("rescue")   ? "Rescue"  :
@@ -630,12 +639,12 @@ function normaliseIntelEvent(e: IntelEvent): UnifiedDisaster {
     summary:     e.aiAnalysis?.summary ?? e.originalText ?? "",
   };
 
-  const uid = `intel_${e.sourceUrl ?? e.originalText ?? Math.random().toString(36).slice(2)}`;
+  const uid = `news_${e.sourceUrl ?? e.originalText ?? Math.random().toString(36).slice(2)}`;
 
   return {
     uid,
-    apiSource:    "intel",
-    source:       e.source ?? "Disaster Intelligence API",
+    apiSource:    "news",
+    source:       e.source ?? "Disaster News API",
     source_url:   e.sourceUrl ?? "",
     disaster_type: e.disasterType ?? e.aiAnalysis?.category ?? "Unknown",
     original_text: e.originalText ?? "No details available",
@@ -694,8 +703,8 @@ function urgencyColor(u: number): string {
   return U_COLOR[u] ?? "var(--dw-muted)";
 }
 
-function makeMarkerIcon(urgency: number, disasterType: string, active = false, isIntel = false) {
-  const c = isIntel ? "#b07ef8" : urgencyColor(urgency);
+function makeMarkerIcon(urgency: number, disasterType: string, active = false, isNews = false) {
+  const c = isNews ? "#b07ef8" : urgencyColor(urgency);
   const icon = getDisasterIcon(disasterType);
   const s = 12 + urgency * 4;
   return L.divIcon({
@@ -755,21 +764,27 @@ function FlyToAlert({ alert }: { alert: UnifiedDisaster | null }) {
 }
 
 /* ─── SOURCE TAB TYPE ────────────────────────────────────────────────────── */
-type SourceTab = "all" | "reddit" | "intel";
+type SourceTab = "all" | "reddit" | "news";
 
 /* ─── COMPONENT ──────────────────────────────────────────────────────────── */
 const Dashboard = () => {
   const navigate = useNavigate();
 
-  /* ── Data state ── */
-  const [redditDisasters, setRedditDisasters] = useState<UnifiedDisaster[]>([]);
-  const [intelDisasters,  setIntelDisasters]  = useState<UnifiedDisaster[]>([]);
-  const [loading, setLoading]                 = useState(false);
-  const [loadStep, setLoadStep]               = useState("");
-  const [loadMsg, setLoadMsg]                 = useState("");
-  const [lastUpdated, setLastUpdated]         = useState("Never loaded");
-  const [apiError, setApiError]               = useState<string | null>(null);
-  const [toast, setToast]                     = useState({ msg: "", type: "", visible: false });
+  /* ── Data state — seed from cache if available ── */
+  const [redditDisasters, setRedditDisasters] = useState<UnifiedDisaster[]>(
+    () => disasterCache?.redditDisasters ?? []
+  );
+  const [newsDisasters, setNewsDisasters] = useState<UnifiedDisaster[]>(
+    () => disasterCache?.newsDisasters ?? []
+  );
+  const [loading, setLoading]       = useState(false);
+  const [loadStep, setLoadStep]     = useState("");
+  const [loadMsg, setLoadMsg]       = useState("");
+  const [lastUpdated, setLastUpdated] = useState(
+    () => disasterCache?.lastUpdated ?? "Never loaded"
+  );
+  const [apiError, setApiError]     = useState<string | null>(null);
+  const [toast, setToast]           = useState({ msg: "", type: "", visible: false });
 
   /* ── Filter state ── */
   const [sourceTab,      setSourceTab]      = useState<SourceTab>("all");
@@ -779,9 +794,9 @@ const Dashboard = () => {
   const [searchQuery,    setSearchQuery]    = useState("");
 
   /* ── UI state ── */
-  const [activeId,          setActiveId]          = useState<string | null>(null);
-  const [showProfilePopup,  setShowProfilePopup]  = useState(false);
-  const [spinning,          setSpinning]          = useState(false);
+  const [activeId,         setActiveId]         = useState<string | null>(null);
+  const [showProfilePopup, setShowProfilePopup] = useState(false);
+  const [spinning,         setSpinning]         = useState(false);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -806,12 +821,9 @@ const Dashboard = () => {
     );
   }, []);
 
-  /* ── New Intelligence API fetch ── */
-  const loadIntelDisasters = useCallback(async () => {
-    // The new API is also served via ngrok — the skip-browser-warning header
-    // is required on every request or ngrok returns an HTML interstitial page
-    // instead of JSON, which causes the CORS preflight to fail.
-    const INTEL_HEADERS: Record<string, string> = {
+  /* ── News API fetch ── */
+  const loadNewsDisasters = useCallback(async () => {
+    const NEWS_HEADERS: Record<string, string> = {
       "Content-Type": "application/json",
       "ngrok-skip-browser-warning": "true",
     };
@@ -819,23 +831,22 @@ const Dashboard = () => {
     try {
       const res = await fetch(`${API_BASE_NEW}/refresh`, {
         method: "POST",
-        headers: INTEL_HEADERS,
+        headers: NEWS_HEADERS,
       });
-      // ignore non-ok silently — /refresh may return nothing useful
       if (!res.ok) throw new Error("refresh failed");
     } catch {
       // best-effort refresh; proceed to /events regardless
     }
 
-    const eventsRes = await fetch(`${API_BASE_NEW}/events?limit=100`, {
-      headers: INTEL_HEADERS,
+    const eventsRes = await fetch(`${API_BASE_NEW}/events`, {
+      headers: NEWS_HEADERS,
     });
-    if (!eventsRes.ok) throw new Error(`Intel events fetch failed (HTTP ${eventsRes.status})`);
+    if (!eventsRes.ok) throw new Error(`News events fetch failed (HTTP ${eventsRes.status})`);
 
-    const payload: IntelEventsResponse = await eventsRes.json();
-    const raw: IntelEvent[] = Array.isArray(payload.data) ? payload.data : [];
-    const normalised = raw.map(normaliseIntelEvent);
-    setIntelDisasters(normalised);
+    const payload: NewsEventsResponse = await eventsRes.json();
+    const raw: NewsEvent[] = Array.isArray(payload.data) ? payload.data : [];
+    const normalised = raw.map(normaliseNewsEvent);
+    setNewsDisasters(normalised);
     return normalised.length;
   }, []);
 
@@ -864,7 +875,7 @@ const Dashboard = () => {
     const verifyData: VerifyResponse = await verifyRes.json();
 
     // Step 3
-    const storedRes = await fetch(`${API_BASE}/disasters/stored?limit=100`, {
+    const storedRes = await fetch(`${API_BASE}/disasters/stored`, {
       headers: { "ngrok-skip-browser-warning": "true" },
     });
     if (!storedRes.ok) throw new Error(`Stored fetch failed (HTTP ${storedRes.status})`);
@@ -888,15 +899,14 @@ const Dashboard = () => {
     };
 
     let redditOk    = false;
-    let intelOk     = false;
+    let newsOk     = false;
     let redditCount = 0;
-    let intelCount  = 0;
+    let newsCount  = 0;
     let redditSaved = 0;
 
     /* ── Reddit pipeline ── */
     try {
       step(1, "Fetching Reddit posts…");
-      // steps 1-2 inside loadRedditDisasters
       step(2, "Verifying with Gemini AI…");
       step(3, "Loading stored disasters…");
       const r = await loadRedditDisasters();
@@ -907,7 +917,7 @@ const Dashboard = () => {
       /* Reddit failed — try loading stored only */
       try {
         step(3, "Falling back to cached data…");
-        const res = await fetch(`${API_BASE}/disasters/stored?limit=100`, {
+        const res = await fetch(`${API_BASE}/disasters/stored`, {
           headers: { "ngrok-skip-browser-warning": "true" },
         });
         if (!res.ok) throw new Error("Stored also failed");
@@ -923,14 +933,16 @@ const Dashboard = () => {
 
     /* ── Intelligence API ── */
     try {
-      step(4, "Loading Intelligence API events…");
-      intelCount = await loadIntelDisasters();
-      intelOk = true;
+      step(4, "Loading News API events…");
+      newsCount = await loadNewsDisasters();
+      newsOk = true;
     } catch {
-      // Intel API unavailable — non-fatal
+      // News API unavailable — non-fatal
     }
 
-    if (!redditOk && !intelOk) {
+    const updatedAt = "Updated " + new Date().toLocaleTimeString();
+
+    if (!redditOk && !newsOk) {
       setApiError(
         `Cannot reach either API.\n\nMake sure the backend servers are running.`
       );
@@ -939,27 +951,51 @@ const Dashboard = () => {
     } else {
       const parts: string[] = [];
       if (redditOk) parts.push(`Reddit: ${redditSaved} new · ${redditCount} total`);
-      if (intelOk)  parts.push(`Intel: ${intelCount} events`);
+      if (newsOk)  parts.push(`News: ${newsCount} events`);
       if (!redditOk) parts.push("Reddit: offline");
-      if (!intelOk)  parts.push("Intel: offline");
-      setLastUpdated("Updated " + new Date().toLocaleTimeString());
+      if (!newsOk)  parts.push("News: offline");
+      setLastUpdated(updatedAt);
       showToast(`✓ ${parts.join("  ·  ")}`, "success");
     }
 
+    hasLoadedOnce = true;
     setLoading(false);
     setSpinning(false);
-  }, [loadRedditDisasters, loadIntelDisasters, showToast]);
+  }, [loadRedditDisasters, loadNewsDisasters, showToast]);
 
-  /* Auto-load on mount */
-  useEffect(() => { loadDisasters(); }, [loadDisasters]);
+  /* ── Write-through: keep module-level cache in sync with state ── */
+  useEffect(() => {
+    if (redditDisasters.length > 0 || newsDisasters.length > 0) {
+      disasterCache = { redditDisasters, newsDisasters, lastUpdated };
+    }
+  }, [redditDisasters, newsDisasters, lastUpdated]);
+
+  /* ── Auto-load on mount ──────────────────────────────────────────────────
+     Rule: call the APIs ONLY if data has never been loaded this session.
+       - First mount after sign-in → hasLoadedOnce is false  → fetch.
+       - Back from Details page    → hasLoadedOnce is true   → skip, use cache.
+       - Manual refresh button     → calls loadDisasters() directly (no gate).
+       - Sign-out resets the flag  → next login fetches fresh.
+  ────────────────────────────────────────────────────────────────────────── */
+  useEffect(() => {
+    if (hasLoadedOnce && disasterCache) {
+      // Restore state from cache — zero API calls.
+      setRedditDisasters(disasterCache.redditDisasters);
+      setNewsDisasters(disasterCache.newsDisasters);
+      setLastUpdated(disasterCache.lastUpdated);
+      return;
+    }
+    loadDisasters();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty dep array — run exactly once on mount
 
   /* ── Merge both sources ── */
-  const allDisasters: UnifiedDisaster[] = [...redditDisasters, ...intelDisasters];
+  const allDisasters: UnifiedDisaster[] = [...redditDisasters, ...newsDisasters];
 
   /* ── Source-tab slice ── */
   const sourceSlice = allDisasters.filter((d) => {
     if (sourceTab === "reddit") return d.apiSource === "reddit";
-    if (sourceTab === "intel")  return d.apiSource === "intel";
+    if (sourceTab === "news")  return d.apiSource === "news";
     return true;
   });
 
@@ -999,6 +1035,13 @@ const Dashboard = () => {
   };
 
   const goToDetails = (d: UnifiedDisaster) => navigate("/details", { state: d });
+
+  /* ── Sign out: clear cache so next login fetches fresh data ── */
+  const handleSignOut = () => {
+    disasterCache = null;
+    hasLoadedOnce = false; // force fresh fetch on next login
+    navigate("/");
+  };
 
   /* ── Render ── */
   return (
@@ -1046,7 +1089,7 @@ const Dashboard = () => {
             )}
           </div>
 
-          <button className="dw-signout-btn" onClick={() => navigate("/")}>
+          <button className="dw-signout-btn" onClick={handleSignOut}>
             Sign Out
           </button>
         </div>
@@ -1093,10 +1136,10 @@ const Dashboard = () => {
               Reddit ({redditDisasters.length})
             </button>
             <button
-              className={`dw-source-tab tab-new${sourceTab === "intel" ? " active" : ""}`}
-              onClick={() => setSourceTab("intel")}
+              className={`dw-source-tab tab-new${sourceTab === "news" ? " active" : ""}`}
+              onClick={() => setSourceTab("news")}
             >
-              Intel API ({intelDisasters.length})
+              News ({newsDisasters.length})
             </button>
           </div>
 
@@ -1187,17 +1230,17 @@ const Dashboard = () => {
             {!loading && filteredDisasters.map((d, i) => {
               const ai       = d.ai_analysis;
               const u        = ai?.urgency ?? 1;
-              const uc       = d.apiSource === "intel" ? "var(--dw-purple)" : urgencyColor(u);
+              const uc       = d.apiSource === "news" ? "var(--dw-purple)" : urgencyColor(u);
               const catStyle = ai?.category ? CAT_STYLE[ai.category] : null;
               const isActive = activeId === d.uid;
               const locStr   = formatLocString(d.location);
               const icon     = getDisasterIcon(d.disaster_type);
-              const isIntel  = d.apiSource === "intel";
+              const isNews  = d.apiSource === "news";
 
               return (
                 <div
                   key={d.uid}
-                  className={`dw-card${isActive ? (isIntel ? " active-intel" : " active") : ""}`}
+                  className={`dw-card${isActive ? (isNews ? " active-news" : " active") : ""}`}
                   style={{ animationDelay: `${Math.min(i * 0.04, 0.5)}s` }}
                   onClick={() => setActiveId(d.uid)}
                 >
@@ -1205,8 +1248,8 @@ const Dashboard = () => {
                     <div
                       className="dw-card-icon"
                       style={{
-                        background: isIntel ? "rgba(176,126,248,0.12)" : `${urgencyColor(u)}18`,
-                        border: isIntel ? "1px solid rgba(176,126,248,0.3)" : `1px solid ${urgencyColor(u)}40`,
+                        background: isNews ? "rgba(176,126,248,0.12)" : `${urgencyColor(u)}18`,
+                        border: isNews ? "1px solid rgba(176,126,248,0.3)" : `1px solid ${urgencyColor(u)}40`,
                       }}
                     >
                       {icon}
@@ -1225,9 +1268,9 @@ const Dashboard = () => {
                       <div
                         className="dw-urgency-badge"
                         style={{
-                          background: isIntel ? "rgba(176,126,248,0.15)" : `${urgencyColor(u)}20`,
+                          background: isNews ? "rgba(176,126,248,0.15)" : `${urgencyColor(u)}20`,
                           color: uc,
-                          border: `1.5px solid ${isIntel ? "rgba(176,126,248,0.4)" : `${urgencyColor(u)}55`}`,
+                          border: `1.5px solid ${isNews ? "rgba(176,126,248,0.4)" : `${urgencyColor(u)}55`}`,
                         }}
                       >
                         {ai.urgency}
@@ -1237,8 +1280,8 @@ const Dashboard = () => {
 
                   <div className="dw-card-meta">
                     {/* Source badge */}
-                    <span className={`dw-source-badge ${isIntel ? "badge-intel" : "badge-reddit"}`}>
-                      {isIntel ? "Intel" : "Reddit"}
+                    <span className={`dw-source-badge ${isNews ? "badge-news" : "badge-reddit"}`}>
+                      {isNews ? "News" : "Reddit"}
                     </span>
 
                     {catStyle && ai?.category && (
@@ -1309,7 +1352,7 @@ const Dashboard = () => {
                   const ai       = d.ai_analysis;
                   const u        = ai?.urgency ?? 1;
                   const isActive = activeId === d.uid;
-                  const isIntel  = d.apiSource === "intel";
+                  const isNews  = d.apiSource === "news";
                   const locStr   = formatLocString(d.location);
                   const cat      = ai?.category ?? "";
                   const catStyle = CAT_STYLE[cat];
@@ -1318,7 +1361,7 @@ const Dashboard = () => {
                     <Marker
                       key={d.uid}
                       position={[d.location!.coordinates!.lat, d.location!.coordinates!.lng]}
-                      icon={makeMarkerIcon(u, d.disaster_type, isActive, isIntel)}
+                      icon={makeMarkerIcon(u, d.disaster_type, isActive, isNews)}
                       eventHandlers={{ click: () => setActiveId(d.uid) }}
                     >
                       <Popup>
@@ -1331,12 +1374,12 @@ const Dashboard = () => {
                                 padding: "1px 5px",
                                 borderRadius: 3,
                                 fontSize: "0.58rem",
-                                background: isIntel ? "rgba(176,126,248,0.15)" : "rgba(79,172,247,0.12)",
-                                color: isIntel ? "var(--dw-purple)" : "var(--dw-blue)",
-                                border: `1px solid ${isIntel ? "rgba(176,126,248,0.3)" : "rgba(79,172,247,0.25)"}`,
+                                background: isNews ? "rgba(176,126,248,0.15)" : "rgba(79,172,247,0.12)",
+                                color: isNews ? "var(--dw-purple)" : "var(--dw-blue)",
+                                border: `1px solid ${isNews ? "rgba(176,126,248,0.3)" : "rgba(79,172,247,0.25)"}`,
                               }}
                             >
-                              {isIntel ? "Intel" : "Reddit"}
+                              {isNews ? "News" : "Reddit"}
                             </span>
                           </div>
                           <div className="dw-popup-title">
@@ -1399,7 +1442,7 @@ const Dashboard = () => {
             )}
             <div className="dw-map-pill">
               <span style={{ color: "var(--dw-blue)" }}>■</span> Reddit &nbsp;
-              <span style={{ color: "var(--dw-purple)" }}>■</span> Intel
+              <span style={{ color: "var(--dw-purple)" }}>■</span> News
             </div>
           </div>
         </div>
